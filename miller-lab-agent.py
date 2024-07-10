@@ -1,4 +1,3 @@
-
 from langchain_community.callbacks import StreamlitCallbackHandler
 import streamlit as st
 
@@ -88,8 +87,14 @@ openai_key = st.secrets["andrew_openai_api_key"]
 
 # VectorDB setup
 embedding = OpenAIEmbeddings(openai_api_key=openai_key)
-vectordb = Chroma.from_documents(documents=document_splits, embedding=embedding)
-retriever = vectordb.as_retriever()
+
+# Attempt using Chroma
+try:
+    vectordb = Chroma.from_documents(documents=document_splits, embedding=embedding)
+    retriever = vectordb.as_retriever()
+except Exception as e:
+    st.error(f"Error initializing Chroma vector store: {e}")
+    st.stop()
 
 # Tool
 HandbookTool = create_retriever_tool(
@@ -174,6 +179,3 @@ if query := st.chat_input("Ask me anything"):
         st.markdown(response)
     # Add assistant message to chat history
     st.session_state.messages.append({"role": "assistant", "content": response})
-
-
-
