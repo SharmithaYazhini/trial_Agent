@@ -6,7 +6,10 @@ from langchain.agents import  initialize_agent
 import streamlit as st
 # from langchain.document_loaders import PyMuPDFLoader
 
+import("pysqlite3")
+import sys sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
+import sqlite3
 # Build a sample vectorDB
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
