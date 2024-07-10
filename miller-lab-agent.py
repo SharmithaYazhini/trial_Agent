@@ -3,7 +3,6 @@ import streamlit as st
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import initialize_agent
-import streamlit as st
 
 # Build a sample vectorDB
 from langchain.vectorstores import Annoy
@@ -53,16 +52,16 @@ def process_entire_document_for_splits(doc):
                         # Process text block with heading levels
                         current_heading_level = None
                         if font == "Archer-MediumItalic" and size == 38.0:
-                            current_heading level = 1
+                            current_heading_level = 1
                         elif font == "Archer-SemiboldItalic" and size == 12.0:
-                            current_heading level = 2
+                            current_heading_level = 2
                         elif font == "Archer-Bold" and size == 9.5:
-                            current_heading level = 3
+                            current_heading_level = 3
                         elif font == "Frutiger-Italic" and size == 9.5:
                             current_heading level = 4
                         
-                        if current_heading level:
-                            page_chunks.append(f"Heading {current_heading level}: {text}")
+                        if current heading level:
+                            page_chunks.append(f"Heading {current heading level}: {text}")
                         else:
                             page_chunks.append(f"Normal Text: {text}")
 
