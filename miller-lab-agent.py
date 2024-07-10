@@ -4,10 +4,9 @@ import streamlit as st
 from langchain_openai import ChatOpenAI
 from langchain.agents import initialize_agent
 import streamlit as st
-# from langchain.document_loaders import PyMuPDFLoader
 
 # Build a sample vectorDB
-from langchain_community.vectorstores import FAISS
+from langchain.vectorstores import Annoy
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.agents.agent_toolkits import create_retriever_tool
@@ -54,23 +53,23 @@ def process_entire_document_for_splits(doc):
                         # Process text block with heading levels
                         current_heading_level = None
                         if font == "Archer-MediumItalic" and size == 38.0:
-                            current_heading_level = 1
+                            current_heading level = 1
                         elif font == "Archer-SemiboldItalic" and size == 12.0:
-                            current_heading_level = 2
+                            current_heading level = 2
                         elif font == "Archer-Bold" and size == 9.5:
-                            current_heading_level = 3
+                            current_heading level = 3
                         elif font == "Frutiger-Italic" and size == 9.5:
-                            current_heading_level = 4
+                            current_heading level = 4
                         
-                        if current_heading_level:
-                            page_chunks.append(f"Heading {current_heading_level}: {text}")
+                        if current_heading level:
+                            page_chunks.append(f"Heading {current_heading level}: {text}")
                         else:
                             page_chunks.append(f"Normal Text: {text}")
 
-        if labeled_page_number:
-                full_page_header = " ".join(page_header)
-                page_content = " ".join(page_chunks)
-                metadata = {"labeled_page_number": labeled_page_number, "page_header": full_page_header}
+        if labeled page number:
+                full page header = " ".join(page_header)
+                page content = " ".join(page_chunks)
+                metadata = {"labeled page number": labeled page number, "page header": full page header}
                 document = Document(page_content, metadata)
                 all_documents.append(document)
 
@@ -86,7 +85,7 @@ openai_key = st.secrets["andrew_openai_api_key"]
 
 # VectorDB setup
 embedding = OpenAIEmbeddings(openai_api_key=openai_key)
-vectordb = FAISS.from_documents(documents=document_splits, embedding=embedding)
+vectordb = Annoy.from_documents(documents=document_splits, embedding=embedding)
 retriever = vectordb.as_retriever()
 
 # Tool
@@ -102,7 +101,7 @@ if 'messages' not in st.session_state:
     st.session_state['messages'] = [{"role": "assistant", 
                                   "content": "Hi, How can I help!"}]
 
-llm = ChatOpenAI(model_name="gpt-4", temperature=0, streaming=True,openai_api_key=openai_key)
+llm = ChatOpenAI(model_name="gpt-4", temperature=0, streaming=True, openai_api_key=openai_key)
 
 tools = [HandbookTool]
 
