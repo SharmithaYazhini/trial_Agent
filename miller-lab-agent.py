@@ -3,9 +3,11 @@ import streamlit as st
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import initialize_agent
+import streamlit as st
+# from langchain.document_loaders import PyMuPDFLoader
 
 # Build a sample vectorDB
-from langchain.vectorstores import Annoy
+from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.agents.agent_toolkits import create_retriever_tool
@@ -13,6 +15,7 @@ from langchain.agents.agent_toolkits import create_retriever_tool
 from langchain.prompts import SystemMessagePromptTemplate
 
 from langchain.memory import ConversationBufferMemory
+from langchain_community.vectorstores import FAISS
 import fitz
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 
@@ -58,17 +61,17 @@ def process_entire_document_for_splits(doc):
                         elif font == "Archer-Bold" and size == 9.5:
                             current_heading_level = 3
                         elif font == "Frutiger-Italic" and size == 9.5:
-                            current_heading level = 4
+                            current_heading_level = 4
                         
-                        if current heading level:
-                            page_chunks.append(f"Heading {current heading level}: {text}")
+                        if current_heading_level:
+                            page_chunks.append(f"Heading {current_heading_level}: {text}")
                         else:
                             page_chunks.append(f"Normal Text: {text}")
 
-        if labeled page number:
-                full page header = " ".join(page_header)
-                page content = " ".join(page_chunks)
-                metadata = {"labeled page number": labeled page number, "page header": full page header}
+        if labeled_page_number:
+                full_page_header = " ".join(page_header)
+                page_content = " ".join(page_chunks)
+                metadata = {"labeled_page_number": labeled_page_number, "page_header": full_page_header}
                 document = Document(page_content, metadata)
                 all_documents.append(document)
 
@@ -84,7 +87,7 @@ openai_key = st.secrets["andrew_openai_api_key"]
 
 # VectorDB setup
 embedding = OpenAIEmbeddings(openai_api_key=openai_key)
-vectordb = Annoy.from_documents(documents=document_splits, embedding=embedding)
+vectordb = Chroma.from_documents(documents=document_splits, embedding=embedding)
 retriever = vectordb.as_retriever()
 
 # Tool
@@ -100,7 +103,7 @@ if 'messages' not in st.session_state:
     st.session_state['messages'] = [{"role": "assistant", 
                                   "content": "Hi, How can I help!"}]
 
-llm = ChatOpenAI(model_name="gpt-4", temperature=0, streaming=True, openai_api_key=openai_key)
+llm = ChatOpenAI(model_name="gpt-4o", temperature=0, streaming=True,openai_api_key=openai_key)
 
 tools = [HandbookTool]
 
@@ -134,7 +137,7 @@ for message in st.session_state.messages:
             st.markdown(message["content"])
 
 format = """
-Make sure the answer is primarily based only on the document pages retrieved. The answer should be dense with citations to the original material. Keep the answer about one paragraph long.
+Make sure the answer is primarily based only on the document pages retireved. The answer should be dense with citations to the orginal material. Keep the answer about one paragraph long.
 - Include inline citations in square brackets within the paragraph.
 - List all references at the end under 'References' with the format: 'Most relevant heading, **Page Header, Page Number**'.
 
