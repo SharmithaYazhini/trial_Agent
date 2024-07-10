@@ -7,7 +7,7 @@ import streamlit as st
 # from langchain.document_loaders import PyMuPDFLoader
 
 # Build a sample vectorDB
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.agents.agent_toolkits import create_retriever_tool
@@ -15,7 +15,6 @@ from langchain.agents.agent_toolkits import create_retriever_tool
 from langchain.prompts import SystemMessagePromptTemplate
 
 from langchain.memory import ConversationBufferMemory
-from langchain_community.vectorstores import FAISS
 import fitz
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 
@@ -87,14 +86,8 @@ openai_key = st.secrets["andrew_openai_api_key"]
 
 # VectorDB setup
 embedding = OpenAIEmbeddings(openai_api_key=openai_key)
-
-# Attempt using Chroma
-try:
-    vectordb = Chroma.from_documents(documents=document_splits, embedding=embedding)
-    retriever = vectordb.as_retriever()
-except Exception as e:
-    st.error(f"Error initializing Chroma vector store: {e}")
-    st.stop()
+vectordb = FAISS.from_documents(documents=document_splits, embedding=embedding)
+retriever = vectordb.as_retriever()
 
 # Tool
 HandbookTool = create_retriever_tool(
@@ -109,7 +102,7 @@ if 'messages' not in st.session_state:
     st.session_state['messages'] = [{"role": "assistant", 
                                   "content": "Hi, How can I help!"}]
 
-llm = ChatOpenAI(model_name="gpt-4o", temperature=0, streaming=True,openai_api_key=openai_key)
+llm = ChatOpenAI(model_name="gpt-4", temperature=0, streaming=True,openai_api_key=openai_key)
 
 tools = [HandbookTool]
 
@@ -143,7 +136,7 @@ for message in st.session_state.messages:
             st.markdown(message["content"])
 
 format = """
-Make sure the answer is primarily based only on the document pages retireved. The answer should be dense with citations to the orginal material. Keep the answer about one paragraph long.
+Make sure the answer is primarily based only on the document pages retrieved. The answer should be dense with citations to the original material. Keep the answer about one paragraph long.
 - Include inline citations in square brackets within the paragraph.
 - List all references at the end under 'References' with the format: 'Most relevant heading, **Page Header, Page Number**'.
 
