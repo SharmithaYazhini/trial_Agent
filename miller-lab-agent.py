@@ -1,172 +1,173 @@
-from langchain_community.callbacks import StreamlitCallbackHandler
+import os
+import tempfile
 import streamlit as st
-
-from langchain_openai import ChatOpenAI
-from langchain.agents import initialize_agent
-
-# Build a sample vectorDB
-from langchain.vectorstores import Annoy
-from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.agents.agent_toolkits import create_retriever_tool
-
-from langchain.prompts import SystemMessagePromptTemplate
-
+from langchain_community.chat_models import ChatOpenAI
+from langchain_community.document_loaders import PyPDFLoader
 from langchain.memory import ConversationBufferMemory
-import fitz
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.callbacks.base import BaseCallbackHandler
+from langchain.chains import ConversationalRetrievalChain
+from langchain_community.vectorstores import DocArrayInMemorySearch
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+import csv
 
+import pysqlite3
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
+openai_api_key = st.secrets["shreyas_openai_api_key"]
 st.title('👪  Caregiving Handbook')
 st.markdown('🙏🏼 Welcome to the Handbook Healthcare Assistant! We have provided the assistant with helpful information to support you in navigating the world of caregiving for children with cancer. It has access to the Children\'s Oncology Group Family Handbook, a trusted resource for pediatric oncology information. Please give it a moment to set itself up.')
-
-user_id = st.text_input("User ID")
 
 class Document:
     def __init__(self, page_content, metadata):
         self.page_content = page_content
         self.metadata = metadata
 
-def process_entire_document_for_splits(doc):
-    all_documents = []
-    for page_num in range(doc.page_count):
-        page = doc.load_page(page_num)
-        text_blocks = page.get_text("dict")["blocks"]
-        labeled_page_number = None
-        page_header = []
-        page_chunks = []
+@st.cache_resource(ttl="1h")
+def load_documents_from_csv(csv_filename):
+    documents = []
+    with open(csv_filename, mode='r', encoding='utf-8') as csv_file:
+        csv_reader = csv.DictReader(csv_file)
+        for row in csv_reader:
+            page_content = row['Page Content']
+            metadata = {
+                'labeled_page_number': row['Labeled Page Number'],
+                'page_header': row['Page Header'],
+                'page_link': row['Page Link']
+            }
+            document = Document(page_content, metadata)
+            documents.append(document)
+    return documents
 
-        for block in text_blocks:
-            if block['type'] == 0:  # text block
-                for line in block["lines"]:
-                    for span in line["spans"]:
-                        text = span["text"].strip()
-                        font = span["font"]
-                        size = span["size"]
+@st.cache_resource(ttl="1h")
+def loading_handbook(csv_filename):
+    
+    document_splits = load_documents_from_csv(csv_filename)
 
-                        # Capture the full page header and labeled page number
-                        if font == "Archer-Bold" and size == 8.0:
-                            page_header.append(text)
-                        if font == "Archer-Bold" and size == 10.0 and text.isdigit():
-                            labeled_page_number = text
+    openai_key = openai_api_key
 
-                        # Process text block with heading levels
-                        current_heading_level = None
-                        if font == "Archer-MediumItalic" and size == 38.0:
-                            current_heading level = 1
-                        elif font == "Archer-SemiboldItalic" and size == 12.0:
-                            current_heading level = 2
-                        elif font == "Archer-Bold" and size == 9.5:
-                            current_heading level = 3
-                        elif font == "Frutiger-Italic" and size == 9.5:
-                            current_heading level = 4
-                        
-                        if current heading level:
-                            page_chunks.append(f"Heading {current heading level}: {text}")
-                        else:
-                            page_chunks.append(f"Normal Text: {text}")
+    # VectorDB setup
+    embedding = OpenAIEmbeddings(openai_api_key=openai_key)
+    vectordb = Chroma.from_documents(documents=document_splits, embedding=embedding)
 
-        if labeled page number:
-                full page header = " ".join(page_header)
-                page content = " ".join(page_chunks)
-                metadata = {"labeled page number": labeled page number, "page header": full page header}
-                document = Document(page_content, metadata)
-                all_documents.append(document)
+    # Define retriever
+    retriever = vectordb.as_retriever(search_type="mmr", search_kwargs={"k": 5, "fetch_k": 20})
 
-    return all_documents
+    return retriever
 
-# Load the PDF document
-data = fitz.open("English_COG_Family_Handbook.pdf")
 
-# Process the document and create splits
-document_splits = process_entire_document_for_splits(data)
+class StreamHandler(BaseCallbackHandler):
+    def __init__(self, container: st.delta_generator.DeltaGenerator, initial_text: str = ""):
+        self.container = container
+        self.text = initial_text
+        self.run_id_ignore_token = None
+        self.initial_prompt = ""  # Add an attribute to store the initial prompt
 
-openai_key = st.secrets["andrew_openai_api_key"]
 
-# VectorDB setup
-embedding = OpenAIEmbeddings(openai_api_key=openai_key)
-vectordb = Annoy.from_documents(documents=document_splits, embedding=embedding)
-retriever = vectordb.as_retriever()
+    def on_llm_start(self, serialized: dict, prompts: list, **kwargs):
+        # Workaround to prevent showing the rephrased question as output
+        if prompts and len(prompts) > 0:
+            self.initial_prompt = prompts[0]  # Store the initial prompt
+        if prompts[0].startswith("Human"):
+            self.run_id_ignore_token = kwargs.get("run_id")
+        # print("Initial LLM Prompt:", self.initial_prompt)
 
-# Tool
-HandbookTool = create_retriever_tool(
-    retriever,
-    "Handbook Tool",
-    "A tool to get relevant information from the children's oncology group family handbook.",
-)
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        if self.run_id_ignore_token == kwargs.get("run_id", False):
+            return
+        self.text += token
+        # print("New token from LLM:", token)
+        self.container.markdown(self.text)
 
-# Initialize chat history
-if 'messages' not in st.session_state:
-    # Start with first message from assistant
-    st.session_state['messages'] = [{"role": "assistant", 
-                                  "content": "Hi, How can I help!"}]
 
-llm = ChatOpenAI(model_name="gpt-4", temperature=0, streaming=True, openai_api_key=openai_key)
+class PrintRetrievalHandler(BaseCallbackHandler):
+    def __init__(self, container):
+        self.status = container.status("**Retrieving Handbook Information**")
 
-tools = [HandbookTool]
+    def on_retriever_start(self, serialized: dict, query: str, **kwargs):
+        # Display initial retrieving context message
+        self.final_status.text("Retrieving context for your question...")
 
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
+    def on_retriever_end(self, documents, **kwargs):
+        content = "**Handbook Links:**\n\n"
+        for idx, doc in enumerate(documents):
+            # Assuming doc is an instance of Document and has metadata as a dictionary
+            # Directly access attributes of the Document object
+            page_number = doc.metadata['labeled_page_number'] if 'labeled_page_number' in doc.metadata else 'Unknown Page Number'
+            page_header = doc.metadata['page_header'] if 'page_header' in doc.metadata else 'Unknown Header'
+            page_link = doc.metadata['page_link']
+            source = f"[{page_header}, Page {page_number}]({page_link})"  
+            
+            content += f"**Document {idx + 1} from {source}:**\n{doc.page_content}\n\n"
+            self.status.markdown(source)
+        # Update the status container with the final content
+        self.status.update(state="complete")
+
+
+csv_filename = "Updated_English_COG_Family_Handbook.csv"
+retriever = loading_handbook(csv_filename)
+
+# Setup memory for contextual conversation
 msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(memory_key='chat_history', chat_memory=msgs, return_messages=True)
+memory = ConversationBufferMemory(memory_key="chat_history", chat_memory=msgs, return_messages=True)
 
-system_prompt_template = SystemMessagePromptTemplate.from_template("""
-You are a Handbook Healthcare Assistant with access to the Children's Oncology Group Family Handbook.
-""")
-
-agent = initialize_agent(
-    tools, llm, agent="chat-conversational-react-description",
-    verbose=True,
-    system_prompt=system_prompt_template,
-    memory=memory
+# Setup LLM and QA chain
+llm = ChatOpenAI(
+    model_name="gpt-4-turbo-preview", openai_api_key=openai_api_key, temperature=0, streaming=True, verbose=True
 )
 
-st_callback = StreamlitCallbackHandler(st.container())
-company_logo="https://www.iu.edu/images/brand/brand-expression/iu-trident-promo.jpg"
+custom_template = """
+You are a cancer care assistant with access to the Children's Oncology Group Family Handbook. 
+Please assist the user with their query, and keep the answer based on the document you have access to the 
+The Childrens Oncology Group Family Handbook. Be empathetic and provide accurate information.
 
-# Display chat messages from history on app rerun
-# Custom avatar for the assistant, default avatar for user
-for message in st.session_state.messages:
-    if message["role"] == 'assistant':
-        with st.chat_message(message["role"], avatar=company_logo):
-            st.markdown(message["content"])
-    else:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+Chat History:
+{chat_history}
 
-format = """
-Make sure the answer is primarily based only on the document pages retrieved. The answer should be dense with citations to the original material. Keep the answer about one paragraph long.
+Question: 
+{question}
+"""
+
+
+qa_chain = ConversationalRetrievalChain.from_llm(
+    llm, retriever=retriever, memory=memory, verbose=True, 
+    # condense_question_prompt=PromptTemplate.from_template(custom_template)
+)
+
+if len(msgs.messages) == 0 or st.sidebar.button("Clear message history"):
+    msgs.clear()
+    msgs.add_ai_message("How can I help you?")
+
+avatars = {"human": "user", "ai": "assistant"}
+for msg in msgs.messages:
+    st.chat_message(avatars[msg.type]).write(msg.content)
+
+system_prompt="""
+System Prompt: 
+
+Always include citations to the orginal material. Keep the answer about one paragraph long.
 - Include inline citations in square brackets within the paragraph.
 - List all references at the end under 'References' with the format: 'Most relevant heading, **Page Header, Page Number**'.
 
 Example:
-User Question: {
-    "action": "Handbook Tool",
-    "action_input": "What is the treatment for cancer?"
-}
-Agent Response: {
-    "action": "Final Answer",
-    "action_input": "
-        The treatment for leukemia includes chemotherapy and radiation therapy [1].The treatment for ALL includes chemotherapy and radiation therapy [2].
+Human : "What is the treatment for cancer?"
+Assistant:   The treatment for leukemia includes chemotherapy and radiation therapy [1].The treatment for ALL includes chemotherapy and radiation therapy [2].
         References:
         1. Leukemia Treatment Overview, **Treatment Procedures**, Page 23"
         2. ALL Treatment Overview, **Treatment Procedures**, Page 36"
-}
+
 """
 
-# Chat logic
-if query := st.chat_input("Ask me anything"):
-    # Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": query})
-    st.session_state.chat_history.append({"role": "user", "content": query})
 
-    # Display user message in chat message container
-    with st.chat_message("user"):
-        st.markdown(query)
 
-    with st.chat_message("assistant", avatar=company_logo):
-        # Send user's question to our chain
-        response = agent.invoke({"input": query+format, "chat_history": st.session_state.chat_history}, config={"callbacks":[st_callback]})["output"]
-        st.session_state.chat_history.append({"role": "assistant", "content": response})
-        st.markdown(response)
-    # Add assistant message to chat history
-    st.session_state.messages.append({"role": "assistant", "content": response})
+if user_query := st.chat_input(placeholder="Ask me anything!"):
+    st.chat_message("user").write(user_query)
+
+    with st.chat_message("assistant"):
+        retrieval_handler = PrintRetrievalHandler(st.container())
+        stream_handler = StreamHandler(st.empty())
+        response = qa_chain.run(system_prompt+user_query, callbacks=[retrieval_handler, stream_handler])
